@@ -1,0 +1,28 @@
+[package]
+name = "rustbin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8", features = ["multipart"] }
+bytecount = "0.6"
+dotenvy = "0.15"
+itoa = "1"
+lru = "0.12"
+maud = { version = "0.27", features = ["axum"] }
+nanoid = "0.4"
+parking_lot = "0.12"
+sqlx = { version = "0.8", features = ["macros", "migrate", "runtime-tokio-rustls", "sqlite"] }
+sublime-color-scheme = "0.1.5"
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+time = "0.3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = 3
+panic = "abort"
+strip = true

@@ -1,0 +1,133 @@
+use std::sync::Arc;
+
+use axum::{
+    extract::{Multipart, Path as AxumPath, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
+};
+use tracing::debug;
+
+use crate::{
+    db::{insert_paste, load_paste_by_ref, load_paste_optional, sanitize_form},
+    error::AppError,
+    extractors::parse_create_paste_multipart,
+    highlighter,
+    render::{index_page, paste_page, usage_page},
+    response::Template,
+    state::{AppResult, AppState},
+};
+
+pub async fn index() -> Template {
+    Template(index_page(None))
+}
+
+pub async fn usage() -> Template {
+    Template(usage_page())
+}
+
+pub async fn create_paste_multipart(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    multipart: Multipart,
+) -> AppResult<Response> {
+    let mut form = parse_create_paste_multipart(multipart).await?;
+    let from_browser = form.from_browser;
+    debug!(
+        filename = ?form.filename,
+        expires_in = ?form.expires_in,
+        content_len = form.content.as_deref().map(str::len).unwrap_or(0),
+        from_browser,
+        "received paste upload"
+    );
+    form.language = highlighter::detect_language(
+        &state,
+        form.filename.as_deref(),
+        form.content.as_deref().unwrap_or_default(),
+    );
+    debug!(
+        filename = ?form.filename,
+        detected_language = ?form.language,
+        "language detection finished"
+    );
+    let id = insert_paste(&state.db, sanitize_form(form)).await?;
+    let location = build_paste_url(&headers, &id);
+
+    if from_browser {
+        return Ok((StatusCode::SEE_OTHER, [(header::LOCATION, location)]).into_response());
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        [(header::LOCATION, location.clone())],
+        format!("{location}\n"),
+    )
+        .into_response())
+}
+
+pub async fn show_paste(
+    State(state): State<Arc<AppState>>,
+    AxumPath(paste_ref): AxumPath<String>,
+) -> AppResult<Template> {
+    if let Some(paste) = load_paste_by_ref(&state.db, &paste_ref).await? {
+        let extension = paste_ref
+            .rsplit_once('.')
+            .map(|(_, ext)| ext)
+            .or(paste.language.as_deref());
+        let render_cache_key = render_cache_key(&paste.id, extension);
+        if let Some(content_html) = state.render_cache.lock().get(&render_cache_key).cloned() {
+            return Ok(Template(paste_page(&paste_ref, &paste, &content_html)));
+        }
+
+        let content_html: Arc<str> =
+            highlighter::render_content(&state, extension, &paste.content).into();
+        state
+            .render_cache
+            .lock()
+            .put(render_cache_key, Arc::clone(&content_html));
+        return Ok(Template(paste_page(&paste_ref, &paste, &content_html)));
+    }
+
+    Err(AppError::NotFound("Paste not found."))
+}
+
+pub async fn show_raw_paste(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> AppResult<Response> {
+    let paste = load_paste_optional(&state.db, &id)
+        .await?
+        .ok_or(AppError::NotFound("Paste not found."))?;
+
+    Ok((
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        paste.content,
+    )
+        .into_response())
+}
+
+fn build_paste_url(headers: &HeaderMap, id: &str) -> String {
+    let host = forwarded_header(headers, "x-forwarded-host")
+        .or_else(|| header_value(headers, header::HOST.as_str()))
+        .unwrap_or("localhost");
+    let proto = forwarded_header(headers, "x-forwarded-proto").unwrap_or("http");
+    let prefix = forwarded_header(headers, "x-forwarded-prefix").unwrap_or("");
+
+    format!("{proto}://{host}{prefix}/{id}")
+}
+
+fn forwarded_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    header_value(headers, name)
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+}
+
+fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+fn render_cache_key(id: &str, extension: Option<&str>) -> String {
+    match extension.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(extension) => format!("{id}:{extension}"),
+        None => id.to_string(),
+    }
+}
