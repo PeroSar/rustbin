@@ -35,24 +35,21 @@ pub fn usage_page() -> Markup {
         None,
         html! {
             h1 { "Rustbin" }
-            "A simple pastebin"
+            "A minimalist pastebin written in rust."
             hr;
             br;
             h2 { "Usage" }
             h3 { "From your browser" }
             p {
-                "Open the homepage, paste your text, and use "
+                "Open the homepage, paste your text, and click "
                 code { "Save" }
-                ". The browser wraps the textarea content as a multipart "
-                code { "POST /" }
-                " file upload, matching the terminal flow, and the server returns the new paste path."
+                "."
             }
             br;
+            br;
             h3 { "From your terminal" }
-            p { "Create a paste with multipart form data. The uploaded file is the only accepted content input:" }
             pre {
                 code { "$ curl -F 'file=@example.txt' https://bin.example.com/" } "\n"
-                code { "https://bin.example.com/abc123def4" }
             }
             pre {
                 code { "$ curl -F 'file=@example.txt' -F 'expires_in=3600' https://bin.example.com/" }
@@ -64,11 +61,13 @@ pub fn usage_page() -> Markup {
                 code { "never" }
                 " or a positive number of seconds."
             }
+            br;
             p {
                 "You may want to use this "
                 a href="https://github.com/PeroSar/rustbin-cli" { "friendly wrapper" }
-                " instead"
+                " instead."
             }
+            br;
             br;
             h3 { "Viewing pastes" }
             p {
@@ -78,20 +77,11 @@ pub fn usage_page() -> Markup {
                 code { "/{id}/raw" }
                 " for plain text."
             }
+            br;
+            br;
             h3 { "Syntax highlighting" }
             p {
-                "If the uploaded filename has a known extension, Rustbin stores that language and always uses it for highlighting."
-            }
-            p {
-                "If the uploaded filename has no extension, Rustbin falls back to go-enry text classification and stores the detected language when it matches a known syntax."
-            }
-            p {
-                "If the filename has an unknown extension, or text classification does not map to a known syntax, Rustbin stores no language and the paste can still be viewed with an extension in the URL when highlighting is needed."
-            }
-            p {
-                "For pastes without a stored language, syntax highlighting can still be selected from the paste URL extension. Append an extension such as "
-                code { ".rs" }
-                " to the paste URL."
+                "Syntax highlighting is automatic based on the file extension. You can also append an extension to the paste URL:"
             }
             pre {
                 code { "https://bin.example.com/abc123def4.rs" }
