@@ -128,7 +128,7 @@ pub fn url_paste_page(short_url: &str, destination: &str) -> Markup {
     )
 }
 
-pub fn paste_page(paste_ref: &str, paste: &Paste, content_html: &str) -> Markup {
+pub fn paste_page(paste_ref: &str, paste: &Paste, content_html: &str, is_markdown: bool) -> Markup {
     page(
         &format!("{paste_ref} | Rustbin"),
         Some(html! {
@@ -137,9 +137,13 @@ pub fn paste_page(paste_ref: &str, paste: &Paste, content_html: &str) -> Markup 
             meta property="og:type" content="website";
             meta property="og:image" content={ (PREVIEW_IMAGE_BASE_URL) (paste.id) };
         }),
-        Some(html! { script { (PreEscaped(PASTE_JS)) } }),
+        if is_markdown { None } else { Some(html! { script { (PreEscaped(PASTE_JS)) } }) },
         html! {
-            (render_content_block(content_html))
+            @if is_markdown {
+                (render_markdown_block(content_html))
+            } @else {
+                (render_content_block(content_html))
+            }
             (footer_paste(&paste.id))
         },
     )
@@ -183,6 +187,14 @@ fn render_content_block(content_html: &str) -> Markup {
             div class="code-grid" {
                 (PreEscaped(content_html))
             }
+        }
+    }
+}
+
+fn render_markdown_block(content_html: &str) -> Markup {
+    html! {
+        div class="markdown-body" {
+            (PreEscaped(content_html))
         }
     }
 }

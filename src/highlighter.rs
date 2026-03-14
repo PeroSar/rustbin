@@ -5,6 +5,8 @@ use syntect::{
     parsing::{SyntaxReference, SyntaxSet},
     util::LinesWithEndings,
 };
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+
 use crate::{enry_ffi, state::AppState};
 
 pub fn render_content(state: &AppState, extension: Option<&str>, content: &str) -> String {
@@ -14,6 +16,105 @@ pub fn render_content(state: &AppState, extension: Option<&str>, content: &str) 
         }
         None => render_plain_html(content),
     }
+}
+
+pub fn is_markdown(extension: Option<&str>) -> bool {
+    matches!(
+        extension.map(|e| e.trim().to_ascii_lowercase()).as_deref(),
+        Some("md" | "markdown" | "mdown" | "mkd" | "mkdn")
+    )
+}
+
+pub fn render_markdown(state: &AppState, content: &str) -> String {
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_HEADING_ATTRIBUTES
+        | Options::ENABLE_SMART_PUNCTUATION;
+
+    let parser = Parser::new_ext(content, options);
+
+    let mut events: Vec<Event<'_>> = Vec::new();
+    let mut in_code_block = false;
+    let mut code_lang: Option<String> = None;
+    let mut code_text = String::new();
+
+    for event in parser {
+        match event {
+            Event::Start(Tag::CodeBlock(kind)) => {
+                in_code_block = true;
+                code_lang = match &kind {
+                    CodeBlockKind::Fenced(lang) => {
+                        let l = lang.split_whitespace().next().unwrap_or("");
+                        if l.is_empty() {
+                            None
+                        } else {
+                            Some(l.to_string())
+                        }
+                    }
+                    CodeBlockKind::Indented => None,
+                };
+                code_text.clear();
+            }
+            Event::Text(text) if in_code_block => {
+                code_text.push_str(&text);
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                in_code_block = false;
+                let html = render_markdown_code_block(state, code_lang.as_deref(), &code_text);
+                events.push(Event::Html(html.into()));
+                code_lang = None;
+            }
+            _ => events.push(event),
+        }
+    }
+
+    let mut html_output = String::new();
+    pulldown_cmark::html::push_html(&mut html_output, events.into_iter());
+    html_output
+}
+
+fn render_markdown_code_block(state: &AppState, lang: Option<&str>, code: &str) -> String {
+    let syntax = lang.and_then(|l| resolve_syntax(state, Some(l)));
+
+    let mut html = String::new();
+    match lang {
+        Some(l) => {
+            html.push_str("<pre><code class=\"language-");
+            push_escaped_html(&mut html, l);
+            html.push_str("\">");
+        }
+        None => html.push_str("<pre><code>"),
+    }
+
+    if let Some(syntax) = syntax {
+        let mut highlighter = HighlightLines::new(syntax, state.theme.as_ref());
+        for line in LinesWithEndings::from(code) {
+            match highlighter.highlight_line(line, &state.syntax_set) {
+                Ok(regions) => {
+                    let mut line_html = String::new();
+                    if append_highlighted_html_for_styled_line(
+                        &regions,
+                        IncludeBackground::No,
+                        &mut line_html,
+                    )
+                    .is_err()
+                    {
+                        push_escaped_html(&mut html, line);
+                    } else {
+                        html.push_str(&line_html);
+                    }
+                }
+                Err(_) => push_escaped_html(&mut html, line),
+            }
+        }
+    } else {
+        push_escaped_html(&mut html, code);
+    }
+
+    html.push_str("</code></pre>\n");
+    html
 }
 
 pub fn detect_language(state: &AppState, filename: Option<&str>, content: &str) -> Option<String> {

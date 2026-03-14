@@ -75,21 +75,25 @@ pub async fn show_paste(
             .rsplit_once('.')
             .map(|(_, ext)| ext)
             .or(paste.language.as_deref());
+        let is_markdown = highlighter::is_markdown(extension);
         let render_cache_key = render_cache_key(&paste.id, extension);
         if let Some(content_html) = state.render_cache.lock().get(&render_cache_key).cloned() {
             return Ok(
-                Template(paste_page(&paste_ref, &paste, &content_html)).into_response(),
+                Template(paste_page(&paste_ref, &paste, &content_html, is_markdown)).into_response(),
             );
         }
 
-        let content_html: Arc<str> =
-            highlighter::render_content(&state, extension, &paste.content).into();
+        let content_html: Arc<str> = if is_markdown {
+            highlighter::render_markdown(&state, &paste.content).into()
+        } else {
+            highlighter::render_content(&state, extension, &paste.content).into()
+        };
         state
             .render_cache
             .lock()
             .put(render_cache_key, Arc::clone(&content_html));
         return Ok(
-            Template(paste_page(&paste_ref, &paste, &content_html)).into_response(),
+            Template(paste_page(&paste_ref, &paste, &content_html, is_markdown)).into_response(),
         );
     }
 
