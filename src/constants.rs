@@ -229,6 +229,11 @@ textarea {
     display: block;
 }
 
+textarea::placeholder {
+    color: var(--muted);
+    opacity: 0.5;
+}
+
 #prompt {
     color: var(--muted);
     z-index: -1000;

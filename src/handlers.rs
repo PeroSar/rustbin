@@ -10,7 +10,7 @@ use crate::{
     error::AppError,
     extractors::parse_create_paste_multipart,
     highlighter,
-    render::{index_page, paste_page, usage_page},
+    render::{index_page, paste_page, url_paste_page, usage_page},
     response::Template,
     state::{AppResult, AppState},
 };
@@ -35,10 +35,19 @@ pub async fn create_paste_multipart(
         form.filename.as_deref(),
         form.content.as_deref().unwrap_or_default(),
     );
+    let content_is_url = form.content.as_deref().map_or(false, is_url);
+    let destination_url = if content_is_url {
+        form.content.as_deref().map(|c| c.trim().to_string())
+    } else {
+        None
+    };
     let id = insert_paste(&state.db, sanitize_form(form)).await?;
     let location = build_paste_url(&headers, &id);
 
     if from_browser {
+        if let Some(destination) = destination_url {
+            return Ok(Template(url_paste_page(&location, &destination)).into_response());
+        }
         return Ok((StatusCode::SEE_OTHER, [(header::LOCATION, location)]).into_response());
     }
 
@@ -53,15 +62,24 @@ pub async fn create_paste_multipart(
 pub async fn show_paste(
     State(state): State<Arc<AppState>>,
     AxumPath(paste_ref): AxumPath<String>,
-) -> AppResult<Template> {
+) -> AppResult<Response> {
     if let Some(paste) = load_paste_by_ref(&state.db, &paste_ref).await? {
+        if is_url(&paste.content) {
+            let url = paste.content.trim().to_string();
+            return Ok(
+                (StatusCode::FOUND, [(header::LOCATION, url)]).into_response()
+            );
+        }
+
         let extension = paste_ref
             .rsplit_once('.')
             .map(|(_, ext)| ext)
             .or(paste.language.as_deref());
         let render_cache_key = render_cache_key(&paste.id, extension);
         if let Some(content_html) = state.render_cache.lock().get(&render_cache_key).cloned() {
-            return Ok(Template(paste_page(&paste_ref, &paste, &content_html)));
+            return Ok(
+                Template(paste_page(&paste_ref, &paste, &content_html)).into_response(),
+            );
         }
 
         let content_html: Arc<str> =
@@ -70,10 +88,18 @@ pub async fn show_paste(
             .render_cache
             .lock()
             .put(render_cache_key, Arc::clone(&content_html));
-        return Ok(Template(paste_page(&paste_ref, &paste, &content_html)));
+        return Ok(
+            Template(paste_page(&paste_ref, &paste, &content_html)).into_response(),
+        );
     }
 
     Err(AppError::NotFound("Paste not found."))
+}
+
+fn is_url(content: &str) -> bool {
+    let trimmed = content.trim();
+    !trimmed.contains('\n')
+        && (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
 }
 
 pub async fn show_raw_paste(

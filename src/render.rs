@@ -21,7 +21,7 @@ pub fn index_page(error_message: Option<&str>) -> Markup {
                     div class="notice" { (message) }
                 }
                 div id="prompt" { ">" }
-                textarea id="code" name="content" spellcheck="false" autofocus required {}
+                textarea id="code" name="content" spellcheck="false" autofocus required placeholder="Paste code or shorten a URL" {}
                 (footer_home())
             }
         },
@@ -35,7 +35,7 @@ pub fn usage_page() -> Markup {
         None,
         html! {
             h1 { "Rustbin" }
-            "A minimalist pastebin written in rust."
+            "A minimalist pastebin and URL shortener written in rust."
             hr;
             br;
             h2 { "Usage" }
@@ -87,6 +87,42 @@ pub fn usage_page() -> Markup {
                 code { "https://bin.example.com/abc123def4.rs" }
             }
             p { "Line links are available with fragments such as " code { "#L12" } " or " code { "#L12-L20" } "." }
+            br;
+            br;
+            h3 { "URL shortening" }
+            p {
+                "Paste a URL on its own to create a short link. Visiting the short URL will redirect to the original."
+            }
+            pre {
+                code { "$ echo 'https://example.com' | curl -F 'file=@-' https://bin.example.com/" }
+            }
+            (footer())
+        },
+    )
+}
+
+pub fn url_paste_page(short_url: &str, destination: &str) -> Markup {
+    page(
+        "URL | Rustbin",
+        None,
+        None,
+        html! {
+            h1 { "URL shortened" }
+            hr;
+            br;
+            h3 { "Short URL" }
+            pre {
+                code {
+                    a href=(short_url) { (short_url) }
+                }
+            }
+            br;
+            h3 { "Destination" }
+            pre {
+                code {
+                    a href=(destination) { (destination) }
+                }
+            }
             (footer())
         },
     )
