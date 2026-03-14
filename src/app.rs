@@ -7,6 +7,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 use sublime_color_scheme::parse_color_scheme_file;
+use syntect::dumps::from_uncompressed_dump_file;
 use syntect::parsing::SyntaxSet;
 use time::OffsetDateTime;
 use tracing::{error, info};
@@ -92,7 +93,9 @@ pub async fn run() -> Result<(), String> {
         .await
         .map_err(|error| format!("database migration failed: {error}"))?;
 
-    let syntax_set = Arc::new(SyntaxSet::load_defaults_newlines());
+    let syntax_set: SyntaxSet = from_uncompressed_dump_file("syntaxes.bin")
+        .map_err(|error| format!("failed to load syntaxes.bin: {error}"))?;
+    let syntax_set = Arc::new(syntax_set);
     let syntax_index_by_token = Arc::new(build_syntax_index_map(syntax_set.as_ref()));
     let theme = parse_color_scheme_file(Path::new("theme/gh-dark.sublime-color-scheme"))
         .map_err(|error| format!("failed to parse theme/gh-dark.sublime-color-scheme: {error}"))
