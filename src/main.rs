@@ -6,6 +6,7 @@ mod error;
 mod extractors;
 mod handlers;
 mod highlighter;
+mod preview;
 mod render;
 mod response;
 mod routes;

@@ -10,6 +10,7 @@ use crate::{
     error::AppError,
     extractors::parse_create_paste_multipart,
     highlighter,
+    preview,
     render::{index_page, paste_page, url_paste_page, usage_page},
     response::Template,
     state::{AppResult, AppState},
@@ -117,6 +118,42 @@ pub async fn show_raw_paste(
     Ok((
         [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
         paste.content,
+    )
+        .into_response())
+}
+
+pub async fn show_preview(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> AppResult<Response> {
+    let paste = load_paste_by_ref(&state.db, &id)
+        .await?
+        .ok_or(AppError::NotFound("Paste not found."))?;
+
+    let extension = id
+        .rsplit_once('.')
+        .map(|(_, ext)| ext)
+        .or(paste.language.as_deref());
+
+    let cache_key = render_cache_key(&paste.id, extension);
+    if let Some(cached) = state.preview_cache.lock().get(&cache_key).cloned() {
+        return Ok((
+            [(header::CONTENT_TYPE, "image/png")],
+            cached.to_vec(),
+        )
+            .into_response());
+    }
+
+    let png_data = preview::generate_preview(&state, &paste.content, extension);
+    let cached: Arc<[u8]> = png_data.into();
+    state
+        .preview_cache
+        .lock()
+        .put(cache_key, Arc::clone(&cached));
+
+    Ok((
+        [(header::CONTENT_TYPE, "image/png")],
+        cached.to_vec(),
     )
         .into_response())
 }

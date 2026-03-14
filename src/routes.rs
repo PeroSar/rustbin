@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{Router, extract::DefaultBodyLimit, routing::get};
 
 use crate::{
-    handlers::{create_paste_multipart, index, show_paste, show_raw_paste, usage},
+    handlers::{create_paste_multipart, index, show_paste, show_preview, show_raw_paste, usage},
     state::AppState,
 };
 
@@ -23,6 +23,7 @@ fn page_routes(max_paste_size: usize) -> Router<Arc<AppState>> {
 
 fn paste_routes() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/{id}/preview.png", get(show_preview))
         .route("/{id}/raw", get(show_raw_paste))
         .route("/{paste_ref}", get(show_paste))
 }

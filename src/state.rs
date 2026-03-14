@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use fontdue::Font;
 use lru::LruCache;
 use parking_lot::Mutex;
 use sqlx::SqlitePool;
@@ -13,7 +14,9 @@ pub struct AppState {
     pub syntax_set: Arc<SyntaxSet>,
     pub syntax_index_by_token: Arc<HashMap<String, usize>>,
     pub render_cache: Arc<Mutex<LruCache<String, Arc<str>>>>,
+    pub preview_cache: Arc<Mutex<LruCache<String, Arc<[u8]>>>>,
     pub theme: Arc<Theme>,
+    pub font: Arc<Font>,
 }
 
 #[derive(Debug, Default)]

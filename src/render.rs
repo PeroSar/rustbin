@@ -5,7 +5,7 @@ use axum::{
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 
 use crate::{
-    constants::{APP_CSS, FAVICON_URL, FONT_URL, LOGO_URL, PASTE_JS, PREVIEW_IMAGE_BASE_URL},
+    constants::{APP_CSS, FAVICON_URL, FONT_URL, LOGO_URL, PASTE_JS},
     response::Template,
     state::Paste,
 };
@@ -133,9 +133,9 @@ pub fn paste_page(paste_ref: &str, paste: &Paste, content_html: &str, is_markdow
         &format!("{paste_ref} | Rustbin"),
         Some(html! {
             meta name="twitter:card" content="summary_large_image";
-            meta name="twitter:image" content={ (PREVIEW_IMAGE_BASE_URL) (paste.id) };
+            meta name="twitter:image" content={ "/" (paste_ref) "/preview.png" };
             meta property="og:type" content="website";
-            meta property="og:image" content={ (PREVIEW_IMAGE_BASE_URL) (paste.id) };
+            meta property="og:image" content={ "/" (paste_ref) "/preview.png" };
         }),
         if is_markdown { None } else { Some(html! { script { (PreEscaped(PASTE_JS)) } }) },
         html! {

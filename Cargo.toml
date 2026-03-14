@@ -7,11 +7,13 @@ edition = "2024"
 axum = { version = "0.8", features = ["multipart"] }
 bytecount = "0.6"
 dotenvy = "0.15"
+fontdue = "0.9"
 itoa = "1"
 lru = "0.12"
 maud = { version = "0.27", features = ["axum"] }
 nanoid = "0.4"
 parking_lot = "0.12"
+png = "0.17"
 pulldown-cmark = "0.12"
 sqlx = { version = "0.8", features = ["macros", "migrate", "runtime-tokio-rustls", "sqlite"] }
 sublime-color-scheme = "0.1.5"

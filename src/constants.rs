@@ -1,7 +1,5 @@
 pub const FAVICON_URL: &str = "https://perosar.eu.org/imgs/rustbin.ico";
 pub const LOGO_URL: &str = "https://perosar.eu.org/imgs/rust.png";
-pub const PREVIEW_IMAGE_BASE_URL: &str =
-    "https://perosar.tilde.team/cgi-bin/rustbin-preview.sh?id=";
 pub const FONT_URL: &str =
     "https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap";
 pub const PASTE_JS: &str = r##"

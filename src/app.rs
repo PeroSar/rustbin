@@ -14,6 +14,7 @@ use tracing::{error, info};
 
 use crate::{
     db::migrate_db,
+    preview,
     routes::app_router,
     state::AppState,
 };
@@ -105,12 +106,16 @@ pub async fn run() -> Result<(), String> {
             })
         })?;
 
+    let font = Arc::new(preview::load_font());
+
     let state = Arc::new(AppState {
         db,
         syntax_set,
         syntax_index_by_token,
         render_cache: Arc::new(Mutex::new(LruCache::new(config.render_cache_capacity))),
+        preview_cache: Arc::new(Mutex::new(LruCache::new(config.render_cache_capacity))),
         theme: Arc::new(theme),
+        font,
     });
 
     tokio::spawn(cleanup_expired_pastes(
