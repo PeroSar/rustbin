@@ -1,7 +1,6 @@
 use nanoid::nanoid;
 use sqlx::{SqlitePool, migrate::Migrator};
 use time::OffsetDateTime;
-use tracing::debug;
 
 use crate::{
     error::AppError,
@@ -29,17 +28,6 @@ pub async fn insert_paste(db: &SqlitePool, form: CreatePasteForm) -> AppResult<S
     let id = nanoid!(10);
     let now = now_timestamp();
     let language = form.language;
-    let content_len = content.len();
-    let expires_in = form.expires_in;
-
-    debug!(
-        paste_id = %id,
-        language = ?language,
-        content_len,
-        expires_in = ?expires_in,
-        expires_at = ?expires_at,
-        "inserting paste"
-    );
 
     sqlx::query!(
         r#"
@@ -108,13 +96,6 @@ pub fn sanitize_form(mut form: CreatePasteForm) -> CreatePasteForm {
         .map(|value| value.trim_end_matches('\r').to_string());
     form.filename = form.filename.map(|value| value.trim().to_string());
     form.language = form.language.map(|value| value.trim().to_ascii_lowercase());
-    debug!(
-        filename = ?form.filename,
-        language = ?form.language,
-        expires_in = ?form.expires_in,
-        content_len = form.content.as_deref().map(str::len).unwrap_or(0),
-        "sanitized paste form"
-    );
     form
 }
 

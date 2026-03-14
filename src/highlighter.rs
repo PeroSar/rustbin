@@ -5,8 +5,6 @@ use syntect::{
     parsing::{SyntaxReference, SyntaxSet},
     util::LinesWithEndings,
 };
-use tracing::{debug, info};
-
 use crate::{enry_ffi, state::AppState};
 
 pub fn render_content(state: &AppState, extension: Option<&str>, content: &str) -> String {
@@ -21,19 +19,8 @@ pub fn render_content(state: &AppState, extension: Option<&str>, content: &str) 
 pub fn detect_language(state: &AppState, filename: Option<&str>, content: &str) -> Option<String> {
     if let Some(extension) = filename_extension(filename) {
         if resolve_syntax(state, Some(&extension)).is_some() {
-            info!(
-                filename = ?filename,
-                extension = %extension,
-                "language resolved directly from filename extension"
-            );
             return Some(extension);
         }
-        info!(
-            filename = ?filename,
-            extension = %extension,
-            "filename extension did not map to a known syntax"
-        );
-        info!(filename = ?filename, "no stored language detected during upload");
         return None;
     }
 
@@ -44,23 +31,11 @@ pub fn detect_language(state: &AppState, filename: Option<&str>, content: &str) 
                 continue;
             }
             if resolve_syntax(state, Some(extension)).is_some() {
-                debug!(
-                    filename = ?filename,
-                    extension = %extension,
-                    "language resolved from enry classifier"
-                );
                 return Some(extension.to_string());
             }
         }
-
-        info!(
-            filename = ?filename,
-            classifier_extensions = %classifier_extensions,
-            "enry classifier extensions did not map to a known syntax"
-        );
     }
 
-    info!(filename = ?filename, "no stored language detected during upload");
     None
 }
 

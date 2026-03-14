@@ -5,8 +5,6 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use tracing::debug;
-
 use crate::{
     db::{insert_paste, load_paste_by_ref, load_paste_optional, sanitize_form},
     error::AppError,
@@ -32,22 +30,10 @@ pub async fn create_paste_multipart(
 ) -> AppResult<Response> {
     let mut form = parse_create_paste_multipart(multipart).await?;
     let from_browser = form.from_browser;
-    debug!(
-        filename = ?form.filename,
-        expires_in = ?form.expires_in,
-        content_len = form.content.as_deref().map(str::len).unwrap_or(0),
-        from_browser,
-        "received paste upload"
-    );
     form.language = highlighter::detect_language(
         &state,
         form.filename.as_deref(),
         form.content.as_deref().unwrap_or_default(),
-    );
-    debug!(
-        filename = ?form.filename,
-        detected_language = ?form.language,
-        "language detection finished"
     );
     let id = insert_paste(&state.db, sanitize_form(form)).await?;
     let location = build_paste_url(&headers, &id);

@@ -1,5 +1,4 @@
 use axum::extract::Multipart;
-use tracing::debug;
 
 use crate::{
     error::bad_request,
@@ -15,31 +14,18 @@ pub async fn parse_create_paste_multipart(mut multipart: Multipart) -> AppResult
             "file" => {
                 form.filename = field.file_name().map(str::to_string);
                 let value = field.text().await.map_err(bad_request)?;
-                debug!(
-                    field = "file",
-                    filename = ?form.filename,
-                    content_len = value.len(),
-                    "parsed multipart upload field"
-                );
                 form.content = Some(value);
             }
             "content" => {
                 form.from_browser = true;
                 let value = field.text().await.map_err(bad_request)?;
-                debug!(
-                    field = "content",
-                    content_len = value.len(),
-                    "parsed multipart browser field"
-                );
                 form.content = Some(value);
             }
             "expires_in" => {
                 let value = field.text().await.map_err(bad_request)?;
-                debug!(field = "expires_in", value = %value, "parsed multipart upload field");
                 form.expires_in = Some(value);
             }
             _ => {
-                debug!(field = %name, "ignoring unexpected multipart field");
                 let _ = field.bytes().await.map_err(bad_request)?;
             }
         }
