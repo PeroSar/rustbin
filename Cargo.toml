@@ -10,7 +10,7 @@ bytecount = "0.6"
 dotenvy = "0.15"
 fontdue = "0.9"
 itoa = "1"
-lru = "0.12"
+lru = "0.16"
 maud = { version = "0.27", features = ["axum"] }
 nanoid = "0.4"
 parking_lot = "0.12"
