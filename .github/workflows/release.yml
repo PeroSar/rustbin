@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: true
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get version from Cargo.toml
+        id: version
+        run: |
+          VERSION=v$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build release binary
+        run: cargo build --release --bin rustbin
+
+      - name: Create archive
+        run: |
+          tar -czf rustbin-${{ steps.version.outputs.tag }}-x86_64-linux.tar.gz \
+            -C target/release rustbin
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          files: rustbin-${{ steps.version.outputs.tag }}-x86_64-linux.tar.gz
