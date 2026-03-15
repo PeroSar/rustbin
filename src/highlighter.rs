@@ -19,10 +19,14 @@ pub fn render_content(state: &AppState, extension: Option<&str>, content: &str) 
 }
 
 pub fn is_markdown(extension: Option<&str>) -> bool {
-    matches!(
-        extension.map(|e| e.trim().to_ascii_lowercase()).as_deref(),
-        Some("md" | "markdown" | "mdown" | "mkd" | "mkdn")
-    )
+    extension.is_some_and(|e| {
+        let e = e.trim();
+        e.eq_ignore_ascii_case("md")
+            || e.eq_ignore_ascii_case("markdown")
+            || e.eq_ignore_ascii_case("mdown")
+            || e.eq_ignore_ascii_case("mkd")
+            || e.eq_ignore_ascii_case("mkdn")
+    })
 }
 
 pub fn render_markdown(state: &AppState, content: &str) -> String {
@@ -292,9 +296,15 @@ fn trim_line_ending(line: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use syntect::dumps::from_uncompressed_data;
     use syntect::parsing::SyntaxSet;
 
     use super::{filename_extension, stored_language_for_syntax};
+
+    fn load_syntax_set() -> SyntaxSet {
+        from_uncompressed_data(include_bytes!("../syntaxes.bin"))
+            .expect("failed to load syntaxes.bin")
+    }
 
     #[test]
     fn extracts_lowercased_extension() {
@@ -313,7 +323,7 @@ mod tests {
 
     #[test]
     fn prefers_extension_for_stored_language() {
-        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let syntax_set = load_syntax_set();
         let syntax = syntax_set
             .find_syntax_by_name("Rust")
             .expect("Rust syntax must exist");

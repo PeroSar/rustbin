@@ -5,6 +5,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use tracing::warn;
 use crate::{
     db::{insert_paste, load_paste_by_ref, load_paste_optional, sanitize_form},
     error::AppError,
@@ -55,6 +56,38 @@ pub async fn create_paste_multipart(
     };
     let id = insert_paste(&state.db, sanitize_form(form)).await?;
     let location = build_paste_url(&headers, &id);
+
+    // Pre-generate preview in background so it's cached before crawlers request it
+    if !content_is_url {
+        let state = Arc::clone(&state);
+        let id = id.clone();
+        tokio::task::spawn(async move {
+            if let Ok(Some(paste)) = load_paste_optional(&state.db, &id).await {
+                let extension = paste.language.as_deref();
+                let cache_key = render_cache_key(&id, extension);
+                let state_ref = Arc::clone(&state);
+                let content = paste.content;
+                let ext_owned = extension.map(|e| e.to_string());
+                match tokio::task::spawn_blocking(move || {
+                    preview::generate_preview(
+                        &state_ref,
+                        &content,
+                        ext_owned.as_deref(),
+                    )
+                })
+                .await
+                {
+                    Ok(png_data) => {
+                        let cached: Arc<[u8]> = png_data.into();
+                        state.preview_cache.lock().put(cache_key, cached);
+                    }
+                    Err(error) => {
+                        warn!(%error, id = %id, "background preview generation failed");
+                    }
+                }
+            }
+        });
+    }
 
     if from_browser {
         if let Some(destination) = destination_url {
@@ -149,22 +182,36 @@ pub async fn show_preview(
     let cache_key = render_cache_key(&paste.id, extension);
     if let Some(cached) = state.preview_cache.lock().get(&cache_key).cloned() {
         return Ok((
-            [(header::CONTENT_TYPE, "image/png")],
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "public, max-age=86400, immutable"),
+            ],
             cached.to_vec(),
         )
             .into_response());
     }
 
-    let png_data = preview::generate_preview(&state, &paste.content, extension);
-    let cached: Arc<[u8]> = png_data.into();
+    let content = paste.content;
+    let ext_owned = extension.map(|e| e.to_string());
+    let state_ref = Arc::clone(&state);
+    let png_data = tokio::task::spawn_blocking(move || {
+        preview::generate_preview(&state_ref, &content, ext_owned.as_deref())
+    })
+    .await
+    .map_err(|_| AppError::InternalMessage("preview generation failed"))?;
+
+    let cached: Arc<[u8]> = Arc::from(png_data.as_slice());
     state
         .preview_cache
         .lock()
-        .put(cache_key, Arc::clone(&cached));
+        .put(cache_key, cached);
 
     Ok((
-        [(header::CONTENT_TYPE, "image/png")],
-        cached.to_vec(),
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400, immutable"),
+        ],
+        png_data,
     )
         .into_response())
 }

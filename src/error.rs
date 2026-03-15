@@ -12,6 +12,7 @@ pub enum AppError {
     NotFound(&'static str),
     UnprocessableEntity(&'static str),
     Internal(sqlx::Error),
+    InternalMessage(&'static str),
 }
 
 impl IntoResponse for AppError {
@@ -26,6 +27,14 @@ impl IntoResponse for AppError {
             }
             Self::Internal(error) => {
                 error!("request failed: {error}");
+                render_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "500",
+                    "Internal server error.",
+                )
+            }
+            Self::InternalMessage(message) => {
+                error!("request failed: {message}");
                 render_error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "500",
