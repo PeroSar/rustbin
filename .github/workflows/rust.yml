@@ -1,13 +1,10 @@
-name: Rust
+name: Rust CI
 
-on:
-  push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
+on: [push, pull_request, workflow_dispatch]
 
 env:
   CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: true
 
 jobs:
   build:

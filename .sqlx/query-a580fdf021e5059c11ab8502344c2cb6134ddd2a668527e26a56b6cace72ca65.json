@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO pastes (id, language, content, created_at, expires_at)\n        VALUES (?1, ?2, ?3, ?4, ?5)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "a580fdf021e5059c11ab8502344c2cb6134ddd2a668527e26a56b6cace72ca65"
+}
