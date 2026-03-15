@@ -2,6 +2,7 @@
 name = "rustbin"
 version = "0.1.0"
 edition = "2024"
+default-run = "rustbin"
 
 [dependencies]
 axum = { version = "0.8", features = ["multipart"] }

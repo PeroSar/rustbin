@@ -16,6 +16,17 @@ use crate::{
     state::{AppResult, AppState},
 };
 
+static FAVICON: &[u8] = include_bytes!("../assets/favicon.ico");
+static LOGO: &[u8] = include_bytes!("../assets/logo.png");
+
+pub async fn favicon() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "image/x-icon")], FAVICON)
+}
+
+pub async fn logo() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "image/png")], LOGO)
+}
+
 pub async fn index() -> Template {
     Template(index_page(None))
 }

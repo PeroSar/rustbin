@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, num::NonZeroUsize, path::Path, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, num::NonZeroUsize, str::FromStr, sync::Arc, time::Duration};
 
 use lru::LruCache;
 use parking_lot::Mutex;
@@ -6,8 +6,8 @@ use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
-use sublime_color_scheme::parse_color_scheme_file;
-use syntect::dumps::from_uncompressed_dump_file;
+use sublime_color_scheme::parse_color_scheme;
+use syntect::dumps::from_uncompressed_data;
 use syntect::parsing::SyntaxSet;
 use time::OffsetDateTime;
 use tracing::{error, info};
@@ -94,15 +94,15 @@ pub async fn run() -> Result<(), String> {
         .await
         .map_err(|error| format!("database migration failed: {error}"))?;
 
-    let syntax_set: SyntaxSet = from_uncompressed_dump_file("syntaxes.bin")
-        .map_err(|error| format!("failed to load syntaxes.bin: {error}"))?;
+    let syntax_set: SyntaxSet = from_uncompressed_data(include_bytes!("../syntaxes.bin"))
+        .map_err(|error| format!("failed to load syntaxes: {error}"))?;
     let syntax_set = Arc::new(syntax_set);
     let syntax_index_by_token = Arc::new(build_syntax_index_map(syntax_set.as_ref()));
-    let theme = parse_color_scheme_file(Path::new("theme/gh-dark.sublime-color-scheme"))
-        .map_err(|error| format!("failed to parse theme/gh-dark.sublime-color-scheme: {error}"))
+    let theme = parse_color_scheme(include_str!("../theme/gh-dark.sublime-color-scheme"))
+        .map_err(|error| format!("failed to parse theme: {error}"))
         .and_then(|scheme| {
             scheme.try_into().map_err(|error| {
-                format!("failed to convert theme/gh-dark.sublime-color-scheme: {error}")
+                format!("failed to convert theme: {error}")
             })
         })?;
 

@@ -5,7 +5,7 @@ use axum::{
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 
 use crate::{
-    constants::{APP_CSS, FAVICON_URL, FONT_URL, LOGO_URL, PASTE_JS},
+    constants::{APP_CSS, FONT_URL, PASTE_JS},
     response::Template,
     state::Paste,
 };
@@ -161,7 +161,7 @@ fn page(
             head {
                 meta charset="UTF-8";
                 title { (title) }
-                link rel="shortcut icon" type="image/x-icon" href=(FAVICON_URL);
+                link rel="shortcut icon" type="image/x-icon" href="/favicon.ico";
                 meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no";
                 link rel="preconnect" href="https://fonts.googleapis.com";
                 link rel="preconnect" href="https://fonts.gstatic.com" crossorigin;
@@ -257,7 +257,7 @@ fn footer_layout(brand_suffix: Markup, actions: Markup) -> Markup {
         span class="foot-spacer" {}
         footer class="foot-minibuf" {
             div class="foot" {
-                img src=(LOGO_URL) height="20" class="foot-logo";
+                img src="/logo.png" height="24" class="foot-logo";
                 span class="foot-hover" {
                     a href="/" class="link-reset" { "Rustbin" }
                 }

@@ -1,5 +1,3 @@
-pub const FAVICON_URL: &str = "https://perosar.eu.org/imgs/rustbin.ico";
-pub const LOGO_URL: &str = "https://perosar.eu.org/imgs/rust.png";
 pub const FONT_URL: &str =
     "https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap";
 pub const PASTE_JS: &str = r##"
@@ -288,7 +286,7 @@ body > hr {
 }
 
 .foot-logo {
-    margin-right: 12px;
+    margin-right: 4px;
 }
 
 .link-reset {
