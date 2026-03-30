@@ -1,4 +1,7 @@
-use std::{collections::HashMap, net::SocketAddr, num::NonZeroUsize, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, net::SocketAddr, num::NonZeroUsize, str::FromStr, sync::Arc,
+    time::Duration,
+};
 
 use lru::LruCache;
 use parking_lot::Mutex;
@@ -12,18 +15,15 @@ use syntect::parsing::SyntaxSet;
 use time::OffsetDateTime;
 use tracing::{error, info};
 
-use crate::{
-    db::migrate_db,
-    preview,
-    routes::app_router,
-    state::AppState,
-};
+use crate::{db::migrate_db, preview, routes::app_router, state::AppState};
 
 pub struct Config {
     pub database_url: String,
     pub host: String,
     pub port: u16,
     pub max_paste_size: usize,
+    pub classifier_max_bytes: usize,
+    pub highlight_max_bytes: usize,
     pub render_cache_capacity: NonZeroUsize,
     pub cleanup_interval: u64,
     pub db_min_connections: u32,
@@ -41,6 +41,16 @@ impl Config {
                 .ok_or_else(|| format!("invalid value for MAX_PASTE_SIZE: {value}"))?,
             Err(_) => 2 * 1024 * 1024,
         };
+        let classifier_max_bytes = match std::env::var("CLASSIFIER_MAX_BYTES") {
+            Ok(value) => parse_byte_size(&value)
+                .ok_or_else(|| format!("invalid value for CLASSIFIER_MAX_BYTES: {value}"))?,
+            Err(_) => 64 * 1024,
+        };
+        let highlight_max_bytes = match std::env::var("HIGHLIGHT_MAX_BYTES") {
+            Ok(value) => parse_byte_size(&value)
+                .ok_or_else(|| format!("invalid value for HIGHLIGHT_MAX_BYTES: {value}"))?,
+            Err(_) => 256 * 1024,
+        };
         let render_cache_capacity = parse_env("RENDER_CACHE_CAPACITY", 128)?;
         let render_cache_capacity = NonZeroUsize::new(render_cache_capacity)
             .ok_or("RENDER_CACHE_CAPACITY must be non-zero")?;
@@ -53,6 +63,8 @@ impl Config {
             host,
             port,
             max_paste_size,
+            classifier_max_bytes,
+            highlight_max_bytes,
             render_cache_capacity,
             cleanup_interval,
             db_min_connections,
@@ -101,9 +113,9 @@ pub async fn run() -> Result<(), String> {
     let theme = parse_color_scheme(include_str!("../theme/gh-dark.sublime-color-scheme"))
         .map_err(|error| format!("failed to parse theme: {error}"))
         .and_then(|scheme| {
-            scheme.try_into().map_err(|error| {
-                format!("failed to convert theme: {error}")
-            })
+            scheme
+                .try_into()
+                .map_err(|error| format!("failed to convert theme: {error}"))
         })?;
 
     let font = Arc::new(preview::load_font());
@@ -112,6 +124,8 @@ pub async fn run() -> Result<(), String> {
         db,
         syntax_set,
         syntax_index_by_token,
+        classifier_max_bytes: config.classifier_max_bytes,
+        highlight_max_bytes: config.highlight_max_bytes,
         render_cache: Arc::new(Mutex::new(LruCache::new(config.render_cache_capacity))),
         preview_cache: Arc::new(Mutex::new(LruCache::new(config.render_cache_capacity))),
         theme: Arc::new(theme),
@@ -125,9 +139,15 @@ pub async fn run() -> Result<(), String> {
 
     let app = app_router(state, config.max_paste_size);
 
-    let address: SocketAddr = format!("{}:{}", config.host, config.port)
-        .parse()
-        .map_err(|error| format!("invalid bind address {}:{}: {error}", config.host, config.port))?;
+    let address: SocketAddr =
+        format!("{}:{}", config.host, config.port)
+            .parse()
+            .map_err(|error| {
+                format!(
+                    "invalid bind address {}:{}: {error}",
+                    config.host, config.port
+                )
+            })?;
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .map_err(|error| format!("failed to bind to {address}: {error}"))?;
@@ -195,7 +215,10 @@ async fn cleanup_expired_pastes(db: SqlitePool, interval_secs: u64) {
         .await
         {
             Ok(result) if result.rows_affected() > 0 => {
-                info!(deleted = result.rows_affected(), "cleaned up expired pastes");
+                info!(
+                    deleted = result.rows_affected(),
+                    "cleaned up expired pastes"
+                );
             }
             Err(error) => {
                 error!("expired paste cleanup failed: {error}");

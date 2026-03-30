@@ -1,3 +1,6 @@
+use std::borrow::Cow;
+
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use syntect::{
     easy::HighlightLines,
     highlighting::Theme,
@@ -5,12 +8,11 @@ use syntect::{
     parsing::{SyntaxReference, SyntaxSet},
     util::LinesWithEndings,
 };
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use crate::{enry_ffi, state::AppState};
 
 pub fn render_content(state: &AppState, extension: Option<&str>, content: &str) -> String {
-    match resolve_syntax(state, extension) {
+    match syntax_for_rendering(state, extension, content) {
         Some(syntax) => {
             render_highlighted_html(&state.syntax_set, state.theme.as_ref(), syntax, content)
         }
@@ -129,6 +131,10 @@ pub fn detect_language(state: &AppState, filename: Option<&str>, content: &str) 
         return None;
     }
 
+    if content.len() > state.classifier_max_bytes {
+        return None;
+    }
+
     if let Some(classifier_extensions) = enry_ffi::detect_language_by_classifier(content) {
         for extension in classifier_extensions.split('\n') {
             let extension = extension.trim();
@@ -145,26 +151,46 @@ pub fn detect_language(state: &AppState, filename: Option<&str>, content: &str) 
 }
 
 fn filename_extension(filename: Option<&str>) -> Option<String> {
-    let (_, extension) = filename?.rsplit_once('.')?;
-    let extension = extension.trim().trim_start_matches('.');
+    let extension = normalized_token(filename?.rsplit_once('.')?.1)?;
     if extension.is_empty() {
         return None;
     }
 
-    Some(extension.to_ascii_lowercase())
+    Some(extension.into_owned())
 }
 
-fn resolve_syntax<'a>(state: &'a AppState, extension: Option<&str>) -> Option<&'a SyntaxReference> {
-    let extension = extension?
-        .trim()
-        .trim_start_matches('.')
-        .to_ascii_lowercase();
-    if extension.is_empty() {
+pub(crate) fn resolve_syntax<'a>(
+    state: &'a AppState,
+    extension: Option<&str>,
+) -> Option<&'a SyntaxReference> {
+    let extension = normalized_token(extension?)?;
+    let &index = state.syntax_index_by_token.get(extension.as_ref())?;
+    state.syntax_set.syntaxes().get(index)
+}
+
+fn normalized_token(token: &str) -> Option<Cow<'_, str>> {
+    let token = token.trim().trim_start_matches('.');
+    if token.is_empty() {
         return None;
     }
 
-    let &index = state.syntax_index_by_token.get(&extension)?;
-    state.syntax_set.syntaxes().get(index)
+    if token.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        Some(Cow::Owned(token.to_ascii_lowercase()))
+    } else {
+        Some(Cow::Borrowed(token))
+    }
+}
+
+fn syntax_for_rendering<'a>(
+    state: &'a AppState,
+    extension: Option<&str>,
+    content: &str,
+) -> Option<&'a SyntaxReference> {
+    if content.len() > state.highlight_max_bytes {
+        return None;
+    }
+
+    resolve_syntax(state, extension)
 }
 
 #[cfg(test)]

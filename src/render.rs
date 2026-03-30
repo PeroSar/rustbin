@@ -137,7 +137,11 @@ pub fn paste_page(paste_ref: &str, paste: &Paste, content_html: &str, is_markdow
             meta property="og:type" content="website";
             meta property="og:image" content={ "/" (paste_ref) "/preview.png" };
         }),
-        if is_markdown { None } else { Some(html! { script { (PreEscaped(PASTE_JS)) } }) },
+        if is_markdown {
+            None
+        } else {
+            Some(html! { script { (PreEscaped(PASTE_JS)) } })
+        },
         html! {
             @if is_markdown {
                 (render_markdown_block(content_html))

@@ -1,13 +1,13 @@
+use std::collections::{HashMap, hash_map::Entry};
+
 use fontdue::{Font, FontSettings};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
-use syntect::{
-    easy::HighlightLines,
-    highlighting::Style,
-    parsing::SyntaxReference,
-    util::LinesWithEndings,
-};
+use syntect::{easy::HighlightLines, highlighting::Style, util::LinesWithEndings};
 
-use crate::{highlighter::is_markdown, state::AppState};
+use crate::{
+    highlighter::{is_markdown, resolve_syntax},
+    state::AppState,
+};
 
 const WIDTH: usize = 1200;
 const HEIGHT: usize = 630;
@@ -61,6 +61,26 @@ const MD_H2_SIZE: f32 = 21.0; // 1.5em
 const MD_H3_SIZE: f32 = 17.5; // 1.25em
 const MD_CODE_SIZE: f32 = 12.0; // .85em
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct GlyphCacheKey {
+    ch: char,
+    font_size_bits: u32,
+}
+
+struct CachedGlyph {
+    width: usize,
+    height: usize,
+    xmin: i32,
+    ymin: i32,
+    advance_width: usize,
+    bitmap: Box<[u8]>,
+}
+
+#[derive(Default)]
+struct GlyphCache {
+    glyphs: HashMap<GlyphCacheKey, CachedGlyph>,
+}
+
 pub fn load_font() -> Font {
     let font_data = include_bytes!("../font/DMMono-Regular.ttf");
     Font::from_bytes(font_data as &[u8], FontSettings::default())
@@ -69,17 +89,20 @@ pub fn load_font() -> Font {
 
 pub fn generate_preview(state: &AppState, content: &str, extension: Option<&str>) -> Vec<u8> {
     let mut pixels = [BG_R, BG_G, BG_B, 255u8].repeat(WIDTH * HEIGHT);
+    let mut glyph_cache = GlyphCache::default();
 
     if content.is_empty() {
         return encode_png(&pixels);
     }
 
     if is_markdown(extension) {
-        return generate_markdown_preview(state, &mut pixels, content);
+        return generate_markdown_preview(state, &mut pixels, content, &mut glyph_cache);
     }
 
     let syntax = resolve_syntax(state, extension);
-    let lines: Vec<&str> = LinesWithEndings::from(content).take(MAX_LINES + 1).collect();
+    let lines: Vec<&str> = LinesWithEndings::from(content)
+        .take(MAX_LINES + 1)
+        .collect();
     let has_more = lines.len() > MAX_LINES;
     let visible_lines = if has_more { MAX_LINES } else { lines.len() };
 
@@ -103,6 +126,7 @@ pub fn generate_preview(state: &AppState, content: &str, extension: Option<&str>
         render_text_right_aligned(
             &mut pixels,
             font,
+            &mut glyph_cache,
             num_str,
             PADDING_X + LINE_NUMBER_WIDTH - 8,
             y_offset,
@@ -133,6 +157,7 @@ pub fn generate_preview(state: &AppState, content: &str, extension: Option<&str>
                     render_highlighted_regions(
                         &mut pixels,
                         font,
+                        &mut glyph_cache,
                         &regions,
                         content_x,
                         y_offset,
@@ -143,6 +168,7 @@ pub fn generate_preview(state: &AppState, content: &str, extension: Option<&str>
                     render_text(
                         &mut pixels,
                         font,
+                        &mut glyph_cache,
                         trimmed,
                         content_x,
                         y_offset,
@@ -156,6 +182,7 @@ pub fn generate_preview(state: &AppState, content: &str, extension: Option<&str>
             render_text(
                 &mut pixels,
                 font,
+                &mut glyph_cache,
                 trimmed,
                 content_x,
                 y_offset,
@@ -174,6 +201,7 @@ pub fn generate_preview(state: &AppState, content: &str, extension: Option<&str>
             render_text(
                 &mut pixels,
                 font,
+                &mut glyph_cache,
                 "...",
                 content_x,
                 dots_y,
@@ -201,15 +229,36 @@ struct MdSpan {
 
 impl MdSpan {
     fn new(text: impl Into<String>, r: u8, g: u8, b: u8) -> Self {
-        Self { text: text.into(), r, g, b, font_size: FONT_SIZE, has_bg: false }
+        Self {
+            text: text.into(),
+            r,
+            g,
+            b,
+            font_size: FONT_SIZE,
+            has_bg: false,
+        }
     }
 
     fn sized(text: impl Into<String>, r: u8, g: u8, b: u8, font_size: f32) -> Self {
-        Self { text: text.into(), r, g, b, font_size, has_bg: false }
+        Self {
+            text: text.into(),
+            r,
+            g,
+            b,
+            font_size,
+            has_bg: false,
+        }
     }
 
     fn code(text: impl Into<String>) -> Self {
-        Self { text: text.into(), r: FG_R, g: FG_G, b: FG_B, font_size: MD_CODE_SIZE, has_bg: true }
+        Self {
+            text: text.into(),
+            r: FG_R,
+            g: FG_G,
+            b: FG_B,
+            font_size: MD_CODE_SIZE,
+            has_bg: true,
+        }
     }
 }
 
@@ -235,12 +284,20 @@ impl MdLine {
     }
 
     fn text(spans: Vec<MdSpan>) -> Self {
-        Self { spans, ..Self::empty() }
+        Self {
+            spans,
+            ..Self::empty()
+        }
     }
 }
 
 /// Collect styled lines from parsed markdown, then render them into the pixel buffer.
-fn generate_markdown_preview(state: &AppState, pixels: &mut [u8], content: &str) -> Vec<u8> {
+fn generate_markdown_preview(
+    state: &AppState,
+    pixels: &mut [u8],
+    content: &str,
+    glyph_cache: &mut GlyphCache,
+) -> Vec<u8> {
     let lines = markdown_to_styled_lines(state, content);
 
     let font = &state.font;
@@ -276,8 +333,7 @@ fn generate_markdown_preview(state: &AppState, pixels: &mut [u8], content: &str)
             255u8
         };
 
-        let content_x = MD_PADDING_X
-            + line.blockquote_depth * 16; // blockquote indent
+        let content_x = MD_PADDING_X + line.blockquote_depth * 16; // blockquote indent
 
         // Draw blockquote left border(s)
         if line.blockquote_depth > 0 {
@@ -295,7 +351,16 @@ fn generate_markdown_preview(state: &AppState, pixels: &mut [u8], content: &str)
             let bg_r = apply_alpha_channel(PANEL2_R, BG_R, alpha_factor);
             let bg_g = apply_alpha_channel(PANEL2_G, BG_G, alpha_factor);
             let bg_b = apply_alpha_channel(PANEL2_B, BG_B, alpha_factor);
-            fill_rect(pixels, content_x, y, WIDTH - content_x - MD_PADDING_X, line.line_height, bg_r, bg_g, bg_b);
+            fill_rect(
+                pixels,
+                content_x,
+                y,
+                WIDTH - content_x - MD_PADDING_X,
+                line.line_height,
+                bg_r,
+                bg_g,
+                bg_b,
+            );
         }
 
         // Draw horizontal rule
@@ -304,10 +369,23 @@ fn generate_markdown_preview(state: &AppState, pixels: &mut [u8], content: &str)
             let hr_r = apply_alpha(BORDER_R, alpha_factor);
             let hr_g = apply_alpha_channel(BORDER_G, BG_G, alpha_factor);
             let hr_b = apply_alpha_channel(BORDER_B, BG_B, alpha_factor);
-            fill_rect(pixels, content_x, hr_y, WIDTH - content_x - MD_PADDING_X, 3, hr_r, hr_g, hr_b);
+            fill_rect(
+                pixels,
+                content_x,
+                hr_y,
+                WIDTH - content_x - MD_PADDING_X,
+                3,
+                hr_r,
+                hr_g,
+                hr_b,
+            );
         } else {
             // Render text spans
-            let text_x = if line.is_code_block { content_x + 16 } else { content_x };
+            let text_x = if line.is_code_block {
+                content_x + 16
+            } else {
+                content_x
+            };
             let mut cursor_x = text_x;
             for span in &line.spans {
                 let r = apply_alpha(span.r, alpha_factor);
@@ -316,17 +394,39 @@ fn generate_markdown_preview(state: &AppState, pixels: &mut [u8], content: &str)
 
                 // Draw inline code background
                 if span.has_bg {
-                    let text_w = measure_text_width(font, &span.text, span.font_size);
+                    let text_w = measure_text_width(glyph_cache, font, &span.text, span.font_size);
                     let pad = 3;
                     let bg_r = apply_alpha_channel(PANEL_R, BG_R, alpha_factor);
                     let bg_g = apply_alpha_channel(PANEL_G, BG_G, alpha_factor);
                     let bg_b = apply_alpha_channel(PANEL_B, BG_B, alpha_factor);
                     let bg_y = y + 2;
                     let bg_h = line.line_height.saturating_sub(4);
-                    fill_rect(pixels, cursor_x.saturating_sub(pad), bg_y, text_w + pad * 2, bg_h, bg_r, bg_g, bg_b);
+                    fill_rect(
+                        pixels,
+                        cursor_x.saturating_sub(pad),
+                        bg_y,
+                        text_w + pad * 2,
+                        bg_h,
+                        bg_r,
+                        bg_g,
+                        bg_b,
+                    );
                 }
 
-                cursor_x = render_text_sized(pixels, font, &span.text, cursor_x, y, r, g, b, span.font_size, line.line_height);
+                cursor_x = render_text_sized(
+                    pixels,
+                    font,
+                    glyph_cache,
+                    &span.text,
+                    cursor_x,
+                    y,
+                    r,
+                    g,
+                    b,
+                    span.font_size,
+                    line.line_height,
+                    WIDTH - MD_PADDING_X,
+                );
             }
         }
 
@@ -336,14 +436,33 @@ fn generate_markdown_preview(state: &AppState, pixels: &mut [u8], content: &str)
             let ul_r = apply_alpha(BORDER_R, alpha_factor);
             let ul_g = apply_alpha_channel(BORDER_G, BG_G, alpha_factor);
             let ul_b = apply_alpha_channel(BORDER_B, BG_B, alpha_factor);
-            fill_rect(pixels, content_x, ul_y, WIDTH - content_x - MD_PADDING_X, 1, ul_r, ul_g, ul_b);
+            fill_rect(
+                pixels,
+                content_x,
+                ul_y,
+                WIDTH - content_x - MD_PADDING_X,
+                1,
+                ul_r,
+                ul_g,
+                ul_b,
+            );
         }
 
         y += line.line_height;
     }
 
     if has_more && y + LINE_HEIGHT <= HEIGHT {
-        render_text(pixels, font, "...", MD_PADDING_X, y, MUTED_R, MUTED_G, MUTED_B);
+        render_text(
+            pixels,
+            font,
+            glyph_cache,
+            "...",
+            MD_PADDING_X,
+            y,
+            MUTED_R,
+            MUTED_G,
+            MUTED_B,
+        );
     }
 
     encode_png(pixels)
@@ -453,7 +572,11 @@ fn markdown_to_styled_lines(state: &AppState, content: &str) -> Vec<MdLine> {
                 code_block_lang = match &kind {
                     CodeBlockKind::Fenced(lang) => {
                         let l = lang.split_whitespace().next().unwrap_or("");
-                        if l.is_empty() { None } else { Some(l.to_string()) }
+                        if l.is_empty() {
+                            None
+                        } else {
+                            Some(l.to_string())
+                        }
                     }
                     CodeBlockKind::Indented => None,
                 };
@@ -506,8 +629,12 @@ fn markdown_to_styled_lines(state: &AppState, content: &str) -> Vec<MdLine> {
                     lines.push(line);
                 }
             }
-            Event::Start(Tag::Link { .. }) => { in_link = true; }
-            Event::End(TagEnd::Link) => { in_link = false; }
+            Event::Start(Tag::Link { .. }) => {
+                in_link = true;
+            }
+            Event::End(TagEnd::Link) => {
+                in_link = false;
+            }
             Event::Start(Tag::Emphasis | Tag::Strong | Tag::Strikethrough) => {}
             Event::End(TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough) => {}
             Event::Code(text) => {
@@ -525,8 +652,7 @@ fn markdown_to_styled_lines(state: &AppState, content: &str) -> Vec<MdLine> {
                     (FG_R, FG_G, FG_B)
                 };
 
-                let parts: Vec<&str> = text.split('\n').collect();
-                for (i, part) in parts.iter().enumerate() {
+                for (i, part) in text.split('\n').enumerate() {
                     if i > 0 {
                         let mut line = MdLine::text(std::mem::take(&mut current_spans));
                         line.blockquote_depth = blockquote_depth;
@@ -605,7 +731,10 @@ fn render_code_block_to_md_lines(
                 Err(_) => {
                     spans.push(MdSpan::sized(
                         trim_line_ending(line_text).to_string(),
-                        FG_R, FG_G, FG_B, MD_CODE_SIZE,
+                        FG_R,
+                        FG_G,
+                        FG_B,
+                        MD_CODE_SIZE,
                     ));
                 }
             }
@@ -623,7 +752,10 @@ fn render_code_block_to_md_lines(
             lines.push(MdLine {
                 spans: vec![MdSpan::sized(
                     trim_line_ending(line_text).to_string(),
-                    FG_R, FG_G, FG_B, MD_CODE_SIZE,
+                    FG_R,
+                    FG_G,
+                    FG_B,
+                    MD_CODE_SIZE,
                 )],
                 line_height: 20,
                 has_underline: false,
@@ -651,20 +783,30 @@ fn fill_rect(pixels: &mut [u8], x: usize, y: usize, w: usize, h: usize, r: u8, g
     }
 }
 
-fn measure_text_width(font: &Font, text: &str, font_size: f32) -> usize {
-    let space_advance = font.metrics(' ', font_size).advance_width as usize;
-    text.chars().map(|ch| {
-        if ch == '\t' {
+fn measure_text_width(
+    glyph_cache: &mut GlyphCache,
+    font: &Font,
+    text: &str,
+    font_size: f32,
+) -> usize {
+    let space_advance = glyph_advance(glyph_cache, font, ' ', font_size);
+    let mut width = 0;
+
+    for ch in text.chars() {
+        width += if ch == '\t' {
             space_advance * TAB_WIDTH
         } else {
-            font.metrics(ch, font_size).advance_width as usize
-        }
-    }).sum()
+            glyph_advance(glyph_cache, font, ch, font_size)
+        };
+    }
+
+    width
 }
 
 fn render_text_sized(
     pixels: &mut [u8],
     font: &Font,
+    glyph_cache: &mut GlyphCache,
     text: &str,
     start_x: usize,
     y_offset: usize,
@@ -673,9 +815,10 @@ fn render_text_sized(
     b: u8,
     font_size: f32,
     line_height: usize,
+    max_x: usize,
 ) -> usize {
     let mut cursor_x = start_x;
-    let space_advance = font.metrics(' ', font_size).advance_width as usize;
+    let space_advance = glyph_advance(glyph_cache, font, ' ', font_size);
 
     for ch in text.chars() {
         if ch == '\t' {
@@ -683,70 +826,21 @@ fn render_text_sized(
             continue;
         }
 
-        if cursor_x >= WIDTH - MD_PADDING_X {
+        if cursor_x >= max_x {
             break;
         }
 
-        let (metrics, bitmap) = font.rasterize(ch, font_size);
-        if metrics.width == 0 || metrics.height == 0 {
-            cursor_x += metrics.advance_width as usize;
+        let glyph = cached_glyph(glyph_cache, font, ch, font_size);
+        if glyph.width == 0 || glyph.height == 0 {
+            cursor_x += glyph.advance_width;
             continue;
         }
 
-        let glyph_x = cursor_x as i32 + metrics.xmin;
-        let glyph_y = y_offset as i32 + (line_height as i32 - 4) - metrics.height as i32 - metrics.ymin;
-
-        let gy_start = (-glyph_y).clamp(0, metrics.height as i32) as usize;
-        let gy_end = (HEIGHT as i32 - glyph_y).clamp(0, metrics.height as i32) as usize;
-        let gx_start = (-glyph_x).clamp(0, metrics.width as i32) as usize;
-        let gx_end = (WIDTH as i32 - glyph_x).clamp(0, metrics.width as i32) as usize;
-
-        for gy in gy_start..gy_end {
-            let py = (glyph_y + gy as i32) as usize;
-            let bitmap_row = gy * metrics.width;
-            let pixel_row = py * WIDTH;
-
-            for gx in gx_start..gx_end {
-                let coverage = bitmap[bitmap_row + gx];
-                if coverage == 0 {
-                    continue;
-                }
-
-                let px = (glyph_x + gx as i32) as usize;
-                let idx = (pixel_row + px) * 4;
-
-                if coverage == 255 {
-                    pixels[idx] = r;
-                    pixels[idx + 1] = g;
-                    pixels[idx + 2] = b;
-                } else {
-                    let cov = coverage as u16;
-                    let inv = 255 - cov;
-                    pixels[idx] = ((r as u16 * cov + pixels[idx] as u16 * inv) / 255) as u8;
-                    pixels[idx + 1] =
-                        ((g as u16 * cov + pixels[idx + 1] as u16 * inv) / 255) as u8;
-                    pixels[idx + 2] =
-                        ((b as u16 * cov + pixels[idx + 2] as u16 * inv) / 255) as u8;
-                }
-            }
-        }
-
-        cursor_x += metrics.advance_width as usize;
+        draw_glyph(pixels, glyph, cursor_x, y_offset, line_height, r, g, b);
+        cursor_x += glyph.advance_width;
     }
 
     cursor_x
-}
-
-fn resolve_syntax<'a>(state: &'a AppState, extension: Option<&str>) -> Option<&'a SyntaxReference> {
-    let extension = extension?
-        .trim()
-        .trim_start_matches('.')
-        .to_ascii_lowercase();
-    if extension.is_empty() {
-        return None;
-    }
-    let &index = state.syntax_index_by_token.get(&extension)?;
-    state.syntax_set.syntaxes().get(index)
 }
 
 fn apply_alpha(color: u8, alpha: u8) -> u8 {
@@ -768,82 +862,40 @@ fn apply_alpha_channel(fg: u8, bg: u8, alpha: u8) -> u8 {
 fn render_highlighted_regions(
     pixels: &mut [u8],
     font: &Font,
+    glyph_cache: &mut GlyphCache,
     regions: &[(Style, &str)],
     start_x: usize,
     y_offset: usize,
     alpha_factor: u8,
 ) {
     let mut cursor_x = start_x;
-    let space_advance = font.metrics(' ', FONT_SIZE).advance_width as usize;
 
     for &(style, text) in regions {
         let text = trim_line_ending(text);
         let r = apply_alpha_channel(style.foreground.r, BG_R, alpha_factor);
         let g = apply_alpha_channel(style.foreground.g, BG_G, alpha_factor);
         let b = apply_alpha_channel(style.foreground.b, BG_B, alpha_factor);
-
-        for ch in text.chars() {
-            if ch == '\t' {
-                cursor_x += space_advance * TAB_WIDTH;
-                continue;
-            }
-
-            if cursor_x >= WIDTH - PADDING_X {
-                break;
-            }
-
-            let (metrics, bitmap) = font.rasterize(ch, FONT_SIZE);
-            if metrics.width == 0 || metrics.height == 0 {
-                cursor_x += metrics.advance_width as usize;
-                continue;
-            }
-
-            let glyph_x = cursor_x as i32 + metrics.xmin;
-            let glyph_y = y_offset as i32 + (LINE_HEIGHT as i32 - 4) - metrics.height as i32 - metrics.ymin;
-
-            let gy_start = (-glyph_y).clamp(0, metrics.height as i32) as usize;
-            let gy_end = (HEIGHT as i32 - glyph_y).clamp(0, metrics.height as i32) as usize;
-            let gx_start = (-glyph_x).clamp(0, metrics.width as i32) as usize;
-            let gx_end = (WIDTH as i32 - glyph_x).clamp(0, metrics.width as i32) as usize;
-
-            for gy in gy_start..gy_end {
-                let py = (glyph_y + gy as i32) as usize;
-                let bitmap_row = gy * metrics.width;
-                let pixel_row = py * WIDTH;
-
-                for gx in gx_start..gx_end {
-                    let coverage = bitmap[bitmap_row + gx];
-                    if coverage == 0 {
-                        continue;
-                    }
-
-                    let px = (glyph_x + gx as i32) as usize;
-                    let idx = (pixel_row + px) * 4;
-
-                    if coverage == 255 {
-                        pixels[idx] = r;
-                        pixels[idx + 1] = g;
-                        pixels[idx + 2] = b;
-                    } else {
-                        let cov = coverage as u16;
-                        let inv = 255 - cov;
-                        pixels[idx] = ((r as u16 * cov + pixels[idx] as u16 * inv) / 255) as u8;
-                        pixels[idx + 1] =
-                            ((g as u16 * cov + pixels[idx + 1] as u16 * inv) / 255) as u8;
-                        pixels[idx + 2] =
-                            ((b as u16 * cov + pixels[idx + 2] as u16 * inv) / 255) as u8;
-                    }
-                }
-            }
-
-            cursor_x += metrics.advance_width as usize;
-        }
+        cursor_x = render_text_sized(
+            pixels,
+            font,
+            glyph_cache,
+            text,
+            cursor_x,
+            y_offset,
+            r,
+            g,
+            b,
+            FONT_SIZE,
+            LINE_HEIGHT,
+            WIDTH - PADDING_X,
+        );
     }
 }
 
 fn render_text(
     pixels: &mut [u8],
     font: &Font,
+    glyph_cache: &mut GlyphCache,
     text: &str,
     start_x: usize,
     y_offset: usize,
@@ -851,12 +903,13 @@ fn render_text(
     g: u8,
     b: u8,
 ) {
-    render_text_returning_x(pixels, font, text, start_x, y_offset, r, g, b);
+    render_text_returning_x(pixels, font, glyph_cache, text, start_x, y_offset, r, g, b);
 }
 
 fn render_text_returning_x(
     pixels: &mut [u8],
     font: &Font,
+    glyph_cache: &mut GlyphCache,
     text: &str,
     start_x: usize,
     y_offset: usize,
@@ -864,73 +917,26 @@ fn render_text_returning_x(
     g: u8,
     b: u8,
 ) -> usize {
-    let mut cursor_x = start_x;
-    let space_advance = font.metrics(' ', FONT_SIZE).advance_width as usize;
-
-    for ch in text.chars() {
-        if ch == '\t' {
-            cursor_x += space_advance * TAB_WIDTH;
-            continue;
-        }
-
-        if cursor_x >= WIDTH - PADDING_X {
-            break;
-        }
-
-        let (metrics, bitmap) = font.rasterize(ch, FONT_SIZE);
-        if metrics.width == 0 || metrics.height == 0 {
-            cursor_x += metrics.advance_width as usize;
-            continue;
-        }
-
-        let glyph_x = cursor_x as i32 + metrics.xmin;
-        let glyph_y =
-            y_offset as i32 + (LINE_HEIGHT as i32 - 4) - metrics.height as i32 - metrics.ymin;
-
-        let gy_start = (-glyph_y).clamp(0, metrics.height as i32) as usize;
-        let gy_end = (HEIGHT as i32 - glyph_y).clamp(0, metrics.height as i32) as usize;
-        let gx_start = (-glyph_x).clamp(0, metrics.width as i32) as usize;
-        let gx_end = (WIDTH as i32 - glyph_x).clamp(0, metrics.width as i32) as usize;
-
-        for gy in gy_start..gy_end {
-            let py = (glyph_y + gy as i32) as usize;
-            let bitmap_row = gy * metrics.width;
-            let pixel_row = py * WIDTH;
-
-            for gx in gx_start..gx_end {
-                let coverage = bitmap[bitmap_row + gx];
-                if coverage == 0 {
-                    continue;
-                }
-
-                let px = (glyph_x + gx as i32) as usize;
-                let idx = (pixel_row + px) * 4;
-
-                if coverage == 255 {
-                    pixels[idx] = r;
-                    pixels[idx + 1] = g;
-                    pixels[idx + 2] = b;
-                } else {
-                    let cov = coverage as u16;
-                    let inv = 255 - cov;
-                    pixels[idx] = ((r as u16 * cov + pixels[idx] as u16 * inv) / 255) as u8;
-                    pixels[idx + 1] =
-                        ((g as u16 * cov + pixels[idx + 1] as u16 * inv) / 255) as u8;
-                    pixels[idx + 2] =
-                        ((b as u16 * cov + pixels[idx + 2] as u16 * inv) / 255) as u8;
-                }
-            }
-        }
-
-        cursor_x += metrics.advance_width as usize;
-    }
-
-    cursor_x
+    render_text_sized(
+        pixels,
+        font,
+        glyph_cache,
+        text,
+        start_x,
+        y_offset,
+        r,
+        g,
+        b,
+        FONT_SIZE,
+        LINE_HEIGHT,
+        WIDTH - PADDING_X,
+    )
 }
 
 fn render_text_right_aligned(
     pixels: &mut [u8],
     font: &Font,
+    glyph_cache: &mut GlyphCache,
     text: &str,
     right_x: usize,
     y_offset: usize,
@@ -938,15 +944,87 @@ fn render_text_right_aligned(
     g: u8,
     b: u8,
 ) {
-    // Measure total width
-    let total_width: usize = text.chars().map(|ch| char_advance(font, ch)).sum();
+    let total_width = measure_text_width(glyph_cache, font, text, FONT_SIZE);
     let start_x = right_x.saturating_sub(total_width);
-    render_text(pixels, font, text, start_x, y_offset, r, g, b);
+    render_text(pixels, font, glyph_cache, text, start_x, y_offset, r, g, b);
 }
 
-fn char_advance(font: &Font, ch: char) -> usize {
-    let metrics = font.metrics(ch, FONT_SIZE);
-    metrics.advance_width as usize
+fn glyph_advance(glyph_cache: &mut GlyphCache, font: &Font, ch: char, font_size: f32) -> usize {
+    cached_glyph(glyph_cache, font, ch, font_size).advance_width
+}
+
+fn cached_glyph<'a>(
+    glyph_cache: &'a mut GlyphCache,
+    font: &Font,
+    ch: char,
+    font_size: f32,
+) -> &'a CachedGlyph {
+    let key = GlyphCacheKey {
+        ch,
+        font_size_bits: font_size.to_bits(),
+    };
+
+    match glyph_cache.glyphs.entry(key) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => {
+            let (metrics, bitmap) = font.rasterize(ch, font_size);
+            entry.insert(CachedGlyph {
+                width: metrics.width,
+                height: metrics.height,
+                xmin: metrics.xmin,
+                ymin: metrics.ymin,
+                advance_width: metrics.advance_width as usize,
+                bitmap: bitmap.into_boxed_slice(),
+            })
+        }
+    }
+}
+
+fn draw_glyph(
+    pixels: &mut [u8],
+    glyph: &CachedGlyph,
+    cursor_x: usize,
+    y_offset: usize,
+    line_height: usize,
+    r: u8,
+    g: u8,
+    b: u8,
+) {
+    let glyph_x = cursor_x as i32 + glyph.xmin;
+    let glyph_y = y_offset as i32 + (line_height as i32 - 4) - glyph.height as i32 - glyph.ymin;
+
+    let gy_start = (-glyph_y).clamp(0, glyph.height as i32) as usize;
+    let gy_end = (HEIGHT as i32 - glyph_y).clamp(0, glyph.height as i32) as usize;
+    let gx_start = (-glyph_x).clamp(0, glyph.width as i32) as usize;
+    let gx_end = (WIDTH as i32 - glyph_x).clamp(0, glyph.width as i32) as usize;
+
+    for gy in gy_start..gy_end {
+        let py = (glyph_y + gy as i32) as usize;
+        let bitmap_row = gy * glyph.width;
+        let pixel_row = py * WIDTH;
+
+        for gx in gx_start..gx_end {
+            let coverage = glyph.bitmap[bitmap_row + gx];
+            if coverage == 0 {
+                continue;
+            }
+
+            let px = (glyph_x + gx as i32) as usize;
+            let idx = (pixel_row + px) * 4;
+
+            if coverage == 255 {
+                pixels[idx] = r;
+                pixels[idx + 1] = g;
+                pixels[idx + 2] = b;
+            } else {
+                let cov = coverage as u16;
+                let inv = 255 - cov;
+                pixels[idx] = ((r as u16 * cov + pixels[idx] as u16 * inv) / 255) as u8;
+                pixels[idx + 1] = ((g as u16 * cov + pixels[idx + 1] as u16 * inv) / 255) as u8;
+                pixels[idx + 2] = ((b as u16 * cov + pixels[idx + 2] as u16 * inv) / 255) as u8;
+            }
+        }
+    }
 }
 
 fn trim_line_ending(line: &str) -> &str {
@@ -962,9 +1040,11 @@ fn encode_png(pixels: &[u8]) -> Vec<u8> {
         let mut encoder = png::Encoder::new(&mut buf, WIDTH as u32, HEIGHT as u32);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_compression(png::Compression::Fast);
+        encoder.set_compression(png::Compression::Fastest);
         let mut writer = encoder.write_header().expect("PNG header write failed");
-        writer.write_image_data(pixels).expect("PNG data write failed");
+        writer
+            .write_image_data(pixels)
+            .expect("PNG data write failed");
     }
     buf
 }

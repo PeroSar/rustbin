@@ -48,18 +48,12 @@ pub async fn insert_paste(db: &SqlitePool, form: CreatePasteForm) -> AppResult<S
 }
 
 pub async fn load_paste_by_ref(db: &SqlitePool, paste_ref: &str) -> AppResult<Option<Paste>> {
-    if let Some(paste) = load_paste_optional(db, paste_ref).await? {
-        return Ok(Some(paste));
-    }
+    let id = paste_ref
+        .rsplit_once('.')
+        .filter(|(id, ext)| !id.is_empty() && !ext.is_empty())
+        .map_or(paste_ref, |(id, _)| id);
 
-    if let Some((id, ext)) = paste_ref.rsplit_once('.')
-        && !id.is_empty()
-        && !ext.is_empty()
-    {
-        return Ok(load_paste_optional(db, id).await?);
-    }
-
-    Ok(None)
+    load_paste_optional(db, id).await
 }
 
 pub async fn load_paste_optional(db: &SqlitePool, id: &str) -> AppResult<Option<Paste>> {

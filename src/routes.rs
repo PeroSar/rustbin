@@ -3,7 +3,10 @@ use std::sync::Arc;
 use axum::{Router, extract::DefaultBodyLimit, routing::get};
 
 use crate::{
-    handlers::{create_paste_multipart, favicon, index, logo, show_paste, show_preview, show_raw_paste, usage},
+    handlers::{
+        create_paste_multipart, favicon, index, logo, show_paste, show_preview, show_raw_paste,
+        usage,
+    },
     state::AppState,
 };
 

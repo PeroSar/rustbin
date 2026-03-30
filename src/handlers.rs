@@ -1,21 +1,22 @@
 use std::sync::Arc;
 
-use axum::{
-    extract::{Multipart, Path as AxumPath, State},
-    http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Response},
-};
-use tracing::warn;
 use crate::{
     db::{insert_paste, load_paste_by_ref, load_paste_optional, sanitize_form},
     error::AppError,
     extractors::parse_create_paste_multipart,
-    highlighter,
-    preview,
+    highlighter, preview,
     render::{index_page, paste_page, url_paste_page, usage_page},
     response::Template,
     state::{AppResult, AppState},
 };
+use axum::{
+    body::Body,
+    extract::{Multipart, Path as AxumPath, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
+};
+use bytes::Bytes;
+use tracing::warn;
 
 static FAVICON: &[u8] = include_bytes!("../assets/favicon.ico");
 static LOGO: &[u8] = include_bytes!("../assets/logo.png");
@@ -48,42 +49,43 @@ pub async fn create_paste_multipart(
         form.filename.as_deref(),
         form.content.as_deref().unwrap_or_default(),
     );
+    let form = sanitize_form(form);
     let content_is_url = form.content.as_deref().map_or(false, is_url);
     let destination_url = if content_is_url {
         form.content.as_deref().map(|c| c.trim().to_string())
     } else {
         None
     };
-    let id = insert_paste(&state.db, sanitize_form(form)).await?;
+    let preview_content = if content_is_url {
+        None
+    } else {
+        form.content.clone()
+    };
+    let preview_language = form.language.clone();
+    let id = insert_paste(&state.db, form).await?;
     let location = build_paste_url(&headers, &id);
 
     // Pre-generate preview in background so it's cached before crawlers request it
-    if !content_is_url {
+    if let Some(content) = preview_content {
         let state = Arc::clone(&state);
         let id = id.clone();
+        let extension = preview_language;
         tokio::task::spawn(async move {
-            if let Ok(Some(paste)) = load_paste_optional(&state.db, &id).await {
-                let extension = paste.language.as_deref();
-                let cache_key = render_cache_key(&id, extension);
-                let state_ref = Arc::clone(&state);
-                let content = paste.content;
-                let ext_owned = extension.map(|e| e.to_string());
-                match tokio::task::spawn_blocking(move || {
-                    preview::generate_preview(
-                        &state_ref,
-                        &content,
-                        ext_owned.as_deref(),
-                    )
-                })
-                .await
-                {
-                    Ok(png_data) => {
-                        let cached: Arc<[u8]> = png_data.into();
-                        state.preview_cache.lock().put(cache_key, cached);
-                    }
-                    Err(error) => {
-                        warn!(%error, id = %id, "background preview generation failed");
-                    }
+            let cache_key = render_cache_key(&id, extension.as_deref());
+            let state_ref = Arc::clone(&state);
+            match tokio::task::spawn_blocking(move || {
+                preview::generate_preview(&state_ref, &content, extension.as_deref())
+            })
+            .await
+            {
+                Ok(png_data) => {
+                    state
+                        .preview_cache
+                        .lock()
+                        .put(cache_key, Bytes::from(png_data));
+                }
+                Err(error) => {
+                    warn!(%error, id = %id, "background preview generation failed");
                 }
             }
         });
@@ -111,9 +113,7 @@ pub async fn show_paste(
     if let Some(paste) = load_paste_by_ref(&state.db, &paste_ref).await? {
         if is_url(&paste.content) {
             let url = paste.content.trim().to_string();
-            return Ok(
-                (StatusCode::FOUND, [(header::LOCATION, url)]).into_response()
-            );
+            return Ok((StatusCode::FOUND, [(header::LOCATION, url)]).into_response());
         }
 
         let extension = paste_ref
@@ -124,7 +124,8 @@ pub async fn show_paste(
         let render_cache_key = render_cache_key(&paste.id, extension);
         if let Some(content_html) = state.render_cache.lock().get(&render_cache_key).cloned() {
             return Ok(
-                Template(paste_page(&paste_ref, &paste, &content_html, is_markdown)).into_response(),
+                Template(paste_page(&paste_ref, &paste, &content_html, is_markdown))
+                    .into_response(),
             );
         }
 
@@ -147,8 +148,7 @@ pub async fn show_paste(
 
 fn is_url(content: &str) -> bool {
     let trimmed = content.trim();
-    !trimmed.contains('\n')
-        && (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
+    !trimmed.contains('\n') && (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
 }
 
 pub async fn show_raw_paste(
@@ -181,14 +181,7 @@ pub async fn show_preview(
 
     let cache_key = render_cache_key(&paste.id, extension);
     if let Some(cached) = state.preview_cache.lock().get(&cache_key).cloned() {
-        return Ok((
-            [
-                (header::CONTENT_TYPE, "image/png"),
-                (header::CACHE_CONTROL, "public, max-age=86400, immutable"),
-            ],
-            cached.to_vec(),
-        )
-            .into_response());
+        return Ok(preview_response(cached));
     }
 
     let content = paste.content;
@@ -200,20 +193,10 @@ pub async fn show_preview(
     .await
     .map_err(|_| AppError::InternalMessage("preview generation failed"))?;
 
-    let cached: Arc<[u8]> = Arc::from(png_data.as_slice());
-    state
-        .preview_cache
-        .lock()
-        .put(cache_key, cached);
+    let cached = Bytes::from(png_data);
+    state.preview_cache.lock().put(cache_key, cached.clone());
 
-    Ok((
-        [
-            (header::CONTENT_TYPE, "image/png"),
-            (header::CACHE_CONTROL, "public, max-age=86400, immutable"),
-        ],
-        png_data,
-    )
-        .into_response())
+    Ok(preview_response(cached))
 }
 
 fn build_paste_url(headers: &HeaderMap, id: &str) -> String {
@@ -241,4 +224,13 @@ fn render_cache_key(id: &str, extension: Option<&str>) -> String {
         Some(extension) => format!("{id}:{extension}"),
         None => id.to_string(),
     }
+}
+
+fn preview_response(bytes: Bytes) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "image/png")
+        .header(header::CACHE_CONTROL, "public, max-age=86400, immutable")
+        .body(Body::from(bytes))
+        .expect("failed to build preview response")
 }

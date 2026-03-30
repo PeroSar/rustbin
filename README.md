@@ -92,9 +92,10 @@ All configuration is done through environment variables (or a `.env` file).
 | `HOST` | `0.0.0.0` | Bind address |
 | `PORT` | `3000` | Bind port |
 | `MAX_PASTE_SIZE` | `2MB` | Maximum upload size (supports `KB`, `MB`, `GB`) |
+| `CLASSIFIER_MAX_BYTES` | `64KB` | Maximum content size for Enry-based language detection when no filename extension is present |
+| `HIGHLIGHT_MAX_BYTES` | `256KB` | Maximum content size for syntax-highlighted HTML rendering before falling back to plain text with line links |
 | `RENDER_CACHE_CAPACITY` | `128` | Number of rendered HTML entries to cache |
 | `CLEANUP_INTERVAL` | `3600` | Seconds between expired-paste cleanup runs |
 | `DB_MIN_CONNECTIONS` | `1` | SQLite connection pool minimum |
 | `DB_MAX_CONNECTIONS` | `5` | SQLite connection pool maximum |
 | `RUST_LOG` | `rustbin=info` | Log level filter (uses `tracing-subscriber`) |
-
