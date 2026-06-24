@@ -40,6 +40,13 @@ cargo build --release
 
 The compiled binary will be at `target/release/rustbin`.
 
+### Docker
+
+```bash
+docker build -t rustbin .
+docker run -p 3000:3000 -v rustbin-data:/data rustbin
+```
+
 ## Usage
 
 ### Running the server
